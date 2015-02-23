@@ -486,7 +486,8 @@ namespace AzureStorageExtensions
             catch (StorageException e)
             {
                 if (e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.PreconditionFailed &&
-                    e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.Conflict)
+                    e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.Conflict &&
+                    e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.NotFound)
                     throw;
                 return false;
             }
