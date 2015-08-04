@@ -11,7 +11,7 @@ namespace AzureStorageExtensions
     {
         public static void ShrinkDictionary(IDictionary<string, EntityProperty> properties)
         {
-            foreach (var key in properties.Keys)
+            foreach (var key in properties.Keys.ToList())
             {
                 if (!key.EndsWith(Suffix))
                     continue;
@@ -65,7 +65,7 @@ namespace AzureStorageExtensions
 
         public static void ExpandDictionary(IDictionary<string, EntityProperty> properties)
         {
-            foreach (var key in properties.Keys)
+            foreach (var key in properties.Keys.ToList())
             {
                 var prop = properties[key];
                 if (prop.PropertyType == EdmType.Binary)
@@ -94,15 +94,19 @@ namespace AzureStorageExtensions
                         continue;
                     properties.Remove(key);
                     var len = 0;
-                    var start = 0;
+                    var byteStart = 0;
+                    var stringStart = 0;
                     var bytes = Encoding.Unicode.GetBytes(value);
-                    while (start < value.Length)
+                    while (byteStart < bytes.Length)
                     {
-                        var size = Encoding.Unicode.GetCharCount(bytes, start, Math.Min(MaxSize, bytes.Length - start));
-                        var str = value.Substring(start, size);
+                        var count = Math.Min(MaxSize, bytes.Length - byteStart);
+                        var stringSize = Encoding.Unicode.GetCharCount(bytes, byteStart, count);
+                        var str = value.Substring(stringStart, stringSize);
+                        var byteSize = Encoding.Unicode.GetByteCount(str);
                         properties.Add(key + len, new EntityProperty(str));
                         len++;
-                        start += size;
+                        stringStart += stringSize;
+                        byteStart += byteSize;
                     }
                     properties.Add(key + "_Length", new EntityProperty(len));
                 }
