@@ -11,20 +11,16 @@ namespace AzureStorageExtensions
 {
     public abstract class BaseCloudContext
     {
-        readonly CloudClient _client;
-        public CloudClient CloudClient
-        {
-            get { return _client; }
-        }
+        public CloudClient CloudClient { get; }
 
         protected BaseCloudContext()
         {
-            _client = CloudClient.Get(this.GetType().Name);
+            CloudClient = CloudClient.Get(this.GetType().Name);
             InitializeProperties();
         }
         protected BaseCloudContext(string connectionName)
         {
-            _client = CloudClient.Get(connectionName);
+            CloudClient = CloudClient.Get(connectionName);
             InitializeProperties();
         }
 

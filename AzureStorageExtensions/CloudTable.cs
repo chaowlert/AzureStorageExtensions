@@ -13,31 +13,17 @@ namespace AzureStorageExtensions
     {
         public CloudTable(CloudTable cloudTable)
         {
-            _cloudTable = cloudTable;
+            CloudTableContext = cloudTable;
         }
 
-        readonly CloudTable _cloudTable;
-        public CloudTable CloudTableContext
-        {
-            get { return _cloudTable; }
-        }
+        public CloudTable CloudTableContext { get; }
 
-        public T this[string partitionKey, string rowKey]
-        {
-            get
-            {
-                return single(partitionKey, rowKey);
-            }
-        }
+        public T this[string partitionKey, string rowKey] => single(partitionKey, rowKey);
 
         public void Insert(T entity, bool replaceIfExists = false)
         {
-            TableOperation op;
-            if (replaceIfExists)
-                op = TableOperation.InsertOrReplace(entity);
-            else
-                op = TableOperation.Insert(entity);
-            _cloudTable.Execute(op);
+            var op = replaceIfExists ? TableOperation.InsertOrReplace(entity) : TableOperation.Insert(entity);
+            CloudTableContext.Execute(op);
         }
 
         public void BulkInsert(IEnumerable<T> entities, bool replaceIfExists = false)
@@ -52,28 +38,28 @@ namespace AzureStorageExtensions
                     op.Insert(item);
                 if (op.Count < 100)
                     continue;
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
                 op.Clear();
             }
             if (op.Count > 0)
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
         }
 
         public TableQuery<T> Query()
         {
-            return _cloudTable.CreateQuery<T>();
+            return CloudTableContext.CreateQuery<T>();
         }
 
         T single(string partitionKey, string rowKey)
         {
             var op = TableOperation.Retrieve<T>(partitionKey, rowKey);
-            var result = _cloudTable.Execute(op);
+            var result = CloudTableContext.Execute(op);
             return (T)result.Result;
         }
 
         public T Update(string partitionKey, string rowKey, Action<T> action, bool createIfNotExists = false)
         {
-            var policy = _cloudTable.ServiceClient.DefaultRequestOptions.RetryPolicy;
+            var policy = CloudTableContext.ServiceClient.DefaultRequestOptions.RetryPolicy;
 
             var retry = 0;
             while (true)
@@ -98,7 +84,7 @@ namespace AzureStorageExtensions
                             {
                                 HttpStatusCode = (int)HttpStatusCode.NotFound
                             },
-                            string.Format("Error update: Not Found\nPartitionKey: {0}\nRowKey: {1}", partitionKey, rowKey),
+                            $"Error update: Not Found\nPartitionKey: {partitionKey}\nRowKey: {rowKey}",
                             null);
                     }
                 }
@@ -106,12 +92,8 @@ namespace AzureStorageExtensions
 
                 try
                 {
-                    TableOperation op;
-                    if (isNew)
-                        op = TableOperation.Insert(obj);
-                    else
-                        op = TableOperation.Replace(obj);
-                    _cloudTable.Execute(op);
+                    var op = isNew ? TableOperation.Insert(obj) : TableOperation.Replace(obj);
+                    CloudTableContext.Execute(op);
                     return obj;
                 }
                 catch (StorageException e)
@@ -129,7 +111,7 @@ namespace AzureStorageExtensions
 
         public bool CheckUpdate(string partitionKey, string rowKey, Func<T, bool> func, bool createIfNotExists = false)
         {
-            var policy = _cloudTable.ServiceClient.DefaultRequestOptions.RetryPolicy;
+            var policy = CloudTableContext.ServiceClient.DefaultRequestOptions.RetryPolicy;
 
             var retry = 0;
             while (true)
@@ -154,7 +136,7 @@ namespace AzureStorageExtensions
                             {
                                 HttpStatusCode = (int)HttpStatusCode.NotFound
                             },
-                            string.Format("Error update: Not Found\nPartitionKey: {0}\nRowKey: {1}", partitionKey, rowKey),
+                            $"Error update: Not Found\nPartitionKey: {partitionKey}\nRowKey: {rowKey}",
                             null);
                     }
                 }
@@ -163,12 +145,8 @@ namespace AzureStorageExtensions
 
                 try
                 {
-                    TableOperation op;
-                    if (isNew)
-                        op = TableOperation.Insert(obj);
-                    else
-                        op = TableOperation.Replace(obj);
-                    _cloudTable.Execute(op);
+                    var op = isNew ? TableOperation.Insert(obj) : TableOperation.Replace(obj);
+                    CloudTableContext.Execute(op);
                     return true;
                 }
                 catch (StorageException e)
@@ -201,7 +179,7 @@ namespace AzureStorageExtensions
                     op.InsertOrReplace(item);
                 if (op.Count < 100)
                     continue;
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
                 op.Clear();
             }
             foreach (var item in dict)
@@ -210,11 +188,11 @@ namespace AzureStorageExtensions
                 op.Delete(item.Value);
                 if (op.Count < 100)
                     continue;
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
                 op.Clear();
             }
             if (op.Count > 0)
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
         }
 
         public void BulkApply(string partitionKey, List<T> updated)
@@ -236,7 +214,7 @@ namespace AzureStorageExtensions
 
         public void BulkUpdate(string partitionKey, Func<string, Dictionary<string, T>, Dictionary<string, T>> func)
         {
-            var policy = _cloudTable.ServiceClient.DefaultRequestOptions.RetryPolicy;
+            var policy = CloudTableContext.ServiceClient.DefaultRequestOptions.RetryPolicy;
 
             var retry = 0;
             while (true)
@@ -257,11 +235,11 @@ namespace AzureStorageExtensions
                             op.Insert(item.Value);
                         if (op.Count < 100)
                             continue;
-                        _cloudTable.ExecuteBatch(op);
+                        CloudTableContext.ExecuteBatch(op);
                         op.Clear();
                     }
                     if (op.Count > 0)
-                        _cloudTable.ExecuteBatch(op);
+                        CloudTableContext.ExecuteBatch(op);
                     return;
                 }
                 catch (StorageException e)
@@ -295,7 +273,7 @@ namespace AzureStorageExtensions
 
         public void BulkUpdate(string partitionKey, Expression<Func<T, bool>> where, Func<string, Dictionary<string, T>, Dictionary<string, T>> func)
         {
-            var policy = _cloudTable.ServiceClient.DefaultRequestOptions.RetryPolicy;
+            var policy = CloudTableContext.ServiceClient.DefaultRequestOptions.RetryPolicy;
             var retry = 0;
             while (true)
             {
@@ -323,11 +301,11 @@ namespace AzureStorageExtensions
                             op.Insert(item.Value);
                         if (op.Count < 100)
                             continue;
-                        _cloudTable.ExecuteBatch(op);
+                        CloudTableContext.ExecuteBatch(op);
                         op.Clear();
                     }
                     if (op.Count > 0)
-                        _cloudTable.ExecuteBatch(op);
+                        CloudTableContext.ExecuteBatch(op);
                     return;
                 }
                 catch (StorageException e)
@@ -347,7 +325,7 @@ namespace AzureStorageExtensions
         {
             entity.ETag = "*";
             var op = TableOperation.Delete(entity);
-            _cloudTable.Execute(op);
+            CloudTableContext.Execute(op);
         }
 
         public void Delete(string partitionKey, string rowKey)
@@ -359,7 +337,7 @@ namespace AzureStorageExtensions
                 ETag = "*",
             };
             var op = TableOperation.Delete(entity);
-            _cloudTable.Execute(op);
+            CloudTableContext.Execute(op);
         }
 
         public void BulkDelete(IEnumerable<T> entities)
@@ -372,11 +350,11 @@ namespace AzureStorageExtensions
                 op.Delete(item);
                 if (op.Count < 100)
                     continue;
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
                 op.Clear();
             }
             if (op.Count > 0)
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
         }
 
         public void BulkDelete(string partitionKey, Expression<Func<T, bool>> predicate)
@@ -395,11 +373,11 @@ namespace AzureStorageExtensions
                 op.Delete(item);
                 if (op.Count < 100)
                     continue;
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
                 op.Clear();
             }
             if (op.Count > 0)
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
         }
 
         public void Replace(T entity, bool checkConcurrency = false)
@@ -407,7 +385,7 @@ namespace AzureStorageExtensions
             if (!checkConcurrency)  
                 entity.ETag = "*";
             var op = TableOperation.Replace(entity);
-            _cloudTable.Execute(op);
+            CloudTableContext.Execute(op);
         }
 
         public void BulkReplace(IEnumerable<T> entities, bool checkConcurrency = false)
@@ -421,13 +399,14 @@ namespace AzureStorageExtensions
                 op.Replace(item);
                 if (op.Count < 100)
                     continue;
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
                 op.Clear();
             }
             if (op.Count > 0)
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
         }
 
+        private static readonly bool _isExpandableEntity = typeof (T).IsSubclassOf(typeof (ExpandableTableEntity));
         public void Merge(string partitionKey, string rowKey, Action<DynamicTableEntity> action, bool createIfNotExists = false)
         {
             var entity = new DynamicTableEntity
@@ -437,12 +416,10 @@ namespace AzureStorageExtensions
                 ETag = "*",
             };
             action(entity);
-            TableOperation op;
-            if (createIfNotExists)
-                op = TableOperation.InsertOrMerge(entity);
-            else
-                op = TableOperation.Merge(entity);
-            _cloudTable.Execute(op);
+            if (_isExpandableEntity)
+                ExpandableTableEntity.ExpandDictionary(entity.Properties);
+            var op = createIfNotExists ? TableOperation.InsertOrMerge(entity) : TableOperation.Merge(entity);
+            CloudTableContext.Execute(op);
         }
 
         public void BulkMerge(string partitionKey, Action<DynamicTableEntity> action, bool createIfNotExists = false)
@@ -461,14 +438,19 @@ namespace AzureStorageExtensions
                     ETag = "*",
                 };
                 action(item);
-                op.Merge(item);
+                if (_isExpandableEntity)
+                    ExpandableTableEntity.ExpandDictionary(item.Properties);
+                if (createIfNotExists)
+                    op.InsertOrMerge(item);
+                else
+                    op.Merge(item);
                 if (op.Count < 100)
                     continue;
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
                 op.Clear();
             }
             if (op.Count > 0)
-                _cloudTable.ExecuteBatch(op);
+                CloudTableContext.ExecuteBatch(op);
         }
 
         public bool Lease<U>(U entity, TimeSpan leaseTime) where U : T, ILeasable

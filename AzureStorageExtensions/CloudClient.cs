@@ -10,10 +10,6 @@ namespace AzureStorageExtensions
 {
     public class CloudClient
     {
-        readonly CloudStorageAccount _account;
-        readonly CloudTableClient _table;
-        readonly CloudBlobClient _blob;
-        readonly CloudQueueClient _queue;
         readonly ConcurrentDictionary<string, Tuple<DateTime, object>> _references = new ConcurrentDictionary<string, Tuple<DateTime, object>>();
 
         static readonly ConcurrentDictionary<string, CloudClient> _dict = new ConcurrentDictionary<string, CloudClient>();
@@ -26,28 +22,19 @@ namespace AzureStorageExtensions
         public CloudClient(string connectionString)
         {
             // Create clients
-            _account = CloudStorageAccount.Parse(connectionString);
-            _table = _account.CreateCloudTableClient();
-            _blob = _account.CreateCloudBlobClient();
-            _queue = _account.CreateCloudQueueClient();
+            Account = CloudStorageAccount.Parse(connectionString);
+            Table = Account.CreateCloudTableClient();
+            Blob = Account.CreateCloudBlobClient();
+            Queue = Account.CreateCloudQueueClient();
         }
 
-        public CloudStorageAccount Account
-        {
-            get { return _account; }
-        }
-        public CloudTableClient Table
-        {
-            get { return _table; }
-        }
-        public CloudBlobClient Blob
-        {
-            get { return _blob; }
-        }
-        public CloudQueueClient Queue
-        {
-            get { return _queue; }
-        }
+        public CloudStorageAccount Account { get; }
+
+        public CloudTableClient Table { get; }
+
+        public CloudBlobClient Blob { get; }
+
+        public CloudQueueClient Queue { get; }
 
         T GetCloudObject<T>(string key, SettingAttribute setting, Func<string, T> getReference, Action<T, SettingAttribute> createIfNotExists, Action<T> deleteIfExists)
         {
@@ -68,10 +55,14 @@ namespace AzureStorageExtensions
             createIfNotExists(obj, setting);
             if (setting.Period != Period.NoPeriod && setting.RemoveAfter > 0)
             {
-                var previous = GetPreviousDate(setting, now);
-                var objNameToDelete = GetName(setting, previous);
-                var objToDelete = getReference(objNameToDelete);
-                deleteIfExists(objToDelete);
+                var maxDelete = setting.Period == Period.Day ? 7 : 1;
+                for (var i = 0; i < maxDelete; i++)
+                {
+                    var previous = GetPreviousDate(setting, now.AddDays(-i));
+                    var objNameToDelete = GetName(setting, previous);
+                    var objToDelete = getReference(objNameToDelete);
+                    deleteIfExists(objToDelete);
+                }
             }
 
             return obj;
@@ -79,15 +70,15 @@ namespace AzureStorageExtensions
 
         public CloudTable GetCloudTable(string key, SettingAttribute setting)
         {
-            return GetCloudObject(key, setting, _table.GetTableReference, (t, s) => t.CreateIfNotExists(), t => t.DeleteIfExists());
+            return GetCloudObject(key, setting, Table.GetTableReference, (t, s) => t.CreateIfNotExists(), t => t.DeleteIfExists());
         }
         public CloudQueue GetCloudQueue(string key, SettingAttribute setting)
         {
-            return GetCloudObject(key, setting, _queue.GetQueueReference, (q, s) => q.CreateIfNotExists(), q => q.DeleteIfExists());
+            return GetCloudObject(key, setting, Queue.GetQueueReference, (q, s) => q.CreateIfNotExists(), q => q.DeleteIfExists());
         }
         public CloudBlobContainer GetCloudBlobContainer(string key, SettingAttribute setting)
         {
-            return GetCloudObject(key, setting, _blob.GetContainerReference, (b, s) => b.CreateIfNotExists(s.BlobAccessType), b => b.DeleteIfExists());
+            return GetCloudObject(key, setting, Blob.GetContainerReference, (b, s) => b.CreateIfNotExists(s.BlobAccessType), b => b.DeleteIfExists());
         }
         public CloudTable<T> GetGenericCloudTable<T>(string key, SettingAttribute setting) where T : class, ITableEntity, new()
         {
@@ -95,7 +86,7 @@ namespace AzureStorageExtensions
         }
         CloudTable<T> CreateCloudTable<T>(string tableName) where T : class, ITableEntity, new()
         {
-            var table = _table.GetTableReference(tableName);
+            var table = Table.GetTableReference(tableName);
             return new CloudTable<T>(table);
         }
 
