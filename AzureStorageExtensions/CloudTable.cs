@@ -417,7 +417,7 @@ namespace AzureStorageExtensions
             };
             action(entity);
             if (_isExpandableEntity)
-                ExpandableTableEntity.ExpandDictionary(entity.Properties);
+                ExpandableTableEntity.ExpandDictionary(entity.Properties, true);
             var op = createIfNotExists ? TableOperation.InsertOrMerge(entity) : TableOperation.Merge(entity);
             CloudTableContext.Execute(op);
         }
@@ -439,7 +439,7 @@ namespace AzureStorageExtensions
                 };
                 action(item);
                 if (_isExpandableEntity)
-                    ExpandableTableEntity.ExpandDictionary(item.Properties);
+                    ExpandableTableEntity.ExpandDictionary(item.Properties, true);
                 if (createIfNotExists)
                     op.InsertOrMerge(item);
                 else

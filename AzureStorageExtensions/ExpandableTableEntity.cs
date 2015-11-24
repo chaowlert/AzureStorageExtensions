@@ -19,7 +19,7 @@ namespace AzureStorageExtensions
                 if (lenProp.PropertyType != EdmType.Int32)
                     continue;
                 var lenValue = lenProp.Int32Value;
-                if (lenValue == null)
+                if (lenValue == null || lenValue == 0)
                     continue;
                 var len = lenValue.Value;
                 var name = key.Substring(0, key.Length - Suffix.Length);
@@ -63,7 +63,7 @@ namespace AzureStorageExtensions
             base.ReadEntity(properties, operationContext);
         }
 
-        public static void ExpandDictionary(IDictionary<string, EntityProperty> properties)
+        public static void ExpandDictionary(IDictionary<string, EntityProperty> properties, bool isMerge = false)
         {
             foreach (var key in properties.Keys.ToList())
             {
@@ -72,7 +72,10 @@ namespace AzureStorageExtensions
                 {
                     var value = prop.BinaryValue;
                     if (value == null || value.Length <= MaxSize)
+                    {
+                        properties.Add(key + "_Length", new EntityProperty(isMerge ? 0 : (int?)null));
                         continue;
+                    }
                     properties.Remove(key);
                     var len = (value.Length + MaxSize - 1) / MaxSize;
                     properties.Add(key + "_Length", new EntityProperty(len));
@@ -87,11 +90,17 @@ namespace AzureStorageExtensions
                 else if (prop.PropertyType == EdmType.String)
                 {
                     var value = prop.StringValue;
-                    if (value == null || value.Length <= MaxSize / 4)
+                    if (value == null || value.Length <= MaxSize/4)
+                    {
+                        properties.Add(key + "_Length", new EntityProperty(isMerge ? 0 : (int?)null));
                         continue;
+                    }
                     var byteCount = Encoding.Unicode.GetByteCount(value);
                     if (byteCount <= MaxSize)
+                    {
+                        properties.Add(key + "_Length", new EntityProperty(isMerge ? 0 : (int?)null));
                         continue;
+                    }
                     properties.Remove(key);
                     var len = 0;
                     var byteStart = 0;
