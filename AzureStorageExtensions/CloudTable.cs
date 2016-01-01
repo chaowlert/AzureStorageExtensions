@@ -452,27 +452,5 @@ namespace AzureStorageExtensions
             if (op.Count > 0)
                 CloudTableContext.ExecuteBatch(op);
         }
-
-        public bool Lease<U>(U entity, TimeSpan leaseTime) where U : T, ILeasable
-        {
-            var now = DateTime.UtcNow;
-            if (entity.LeaseExpire.HasValue && entity.LeaseExpire.Value >= now)
-                return false;
-            entity.LeaseExpire = DateTime.UtcNow.Add(leaseTime);
-
-            try
-            {
-                Replace(entity, true);
-                return true;
-            }
-            catch (StorageException e)
-            {
-                if (e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.PreconditionFailed &&
-                    e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.Conflict &&
-                    e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.NotFound)
-                    throw;
-                return false;
-            }
-        }
     }
 }
