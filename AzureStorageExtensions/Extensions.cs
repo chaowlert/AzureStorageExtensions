@@ -22,14 +22,11 @@ public static class PublicExtensions
         }
         catch (StorageException ex)
         {
-            if (ex.RequestInformation.HttpStatusCode == 404)
-            {
-                if (ex.RequestInformation.ExtendedErrorInformation == null || ex.RequestInformation.ExtendedErrorInformation.ErrorCode == BlobErrorCodeStrings.BlobNotFound)
-                    return;
+            if (ex.RequestInformation.HttpStatusCode != 404)
                 throw;
-            }
-            else
-                throw;
+            if (ex.RequestInformation.ExtendedErrorInformation == null || ex.RequestInformation.ExtendedErrorInformation.ErrorCode == BlobErrorCodeStrings.BlobNotFound)
+                return;
+            throw;
         }
     }
 
@@ -59,6 +56,32 @@ public static class PublicExtensions
         }
     }
 
+    public static void BulkSafeDelete<T>(this CloudTable<T> table, IEnumerable<T> entities)
+        where T : class, ITableEntity, new()
+    {
+        foreach (var chunk in entities.Chunk(100))
+        {
+            table.bulkSafeDelete(chunk);
+        }
+    }
+
+    static void bulkSafeDelete<T>(this CloudTable<T> table, IEnumerable<T> entities) where T : class, ITableEntity, new()
+    {
+        try
+        {
+            table.BulkDelete(entities);
+        }
+        catch (StorageException ex)
+        {
+            if (ex.RequestInformation.HttpStatusCode != 404)
+                throw;
+            foreach (var entity in entities)
+            {
+                table.SafeDelete(entity);
+            }
+        }
+    }
+
     public static U AggregateSegment<T, U>(this TableQuery<T> query, U seed, Func<IEnumerable<T>, U> selector, Func<U, U, U> aggregator)
     {
         TableContinuationToken token = null;
@@ -84,9 +107,20 @@ public static class PublicExtensions
         {
             var segment = query.ExecuteSegmented(token);
             if (segment.Results.Count > 0)
-            {
                 action(segment.Results);
-            }
+            token = segment.ContinuationToken;
+        }
+        while (token != null);
+    }
+
+    public static IEnumerable<U> MapSegment<T, U>(this TableQuery<T> query, Func<IList<T>, U> func)
+    {
+        TableContinuationToken token = null;
+        do
+        {
+            var segment = query.ExecuteSegmented(token);
+            if (segment.Results.Count > 0)
+                yield return func(segment.Results);
             token = segment.ContinuationToken;
         }
         while (token != null);
@@ -139,9 +173,56 @@ public static class PublicExtensions
         }
     }
 
+    public static IEnumerable<T> BulkLease<T>(this CloudTable<T> table, IEnumerable<T> entities, TimeSpan leaseTime)
+        where T : class, ITableEntity, ILeasable, new()
+    {
+        return table.BulkLease(entities, (item, now) => now.Add(leaseTime));
+    }
+
+    public static IEnumerable<T> BulkLease<T>(this CloudTable<T> table, IEnumerable<T> entities, Func<T, DateTime, DateTime> leaseFunc)
+        where T : class, ITableEntity, ILeasable, new()
+    {
+        var now = DateTime.UtcNow;
+        var list = entities.Where(item => item.LeaseExpire.GetValueOrDefault() <= now).ToList();
+
+        foreach (var item in list)
+        {
+            item.LeaseExpire = leaseFunc(item, now);
+        }
+        return list.Chunk(100).Aggregate(Enumerable.Empty<T>(), (a, b) => a.Concat(table.bulkLease(b)));
+    }
+
+    static IEnumerable<T> bulkLease<T>(this CloudTable<T> table, IEnumerable<T> entities)
+        where T : class, ITableEntity, ILeasable, new()
+    {
+        var list = entities as IList<T> ?? entities.ToList();
+        try
+        {
+            table.BulkReplace(list, true);
+        }
+        catch (StorageException e)
+        {
+            if (e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.PreconditionFailed &&
+                e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.Conflict)
+                throw;
+            return Enumerable.Empty<T>();
+        }
+        return list;
+    }
 }
 static class Extensions
 {
+    public static IEnumerable<IEnumerable<T>> Chunk<T>(this IEnumerable<T> source, int chunksize)
+    {
+        var list = source as IList<T> ?? source.ToList();
+        var pos = 0;
+        while (list.Count > pos)
+        {
+            yield return list.Skip(pos).Take(chunksize);
+            pos += chunksize;
+        }
+    }
+
     public static T AggregateBalance<T>(this IEnumerable<T> source, Func<T, T, T> func)
     {
         while (true)
