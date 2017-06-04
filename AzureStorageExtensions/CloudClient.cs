@@ -38,8 +38,7 @@ namespace AzureStorageExtensions
 
         T GetCloudObject<T>(string key, SettingAttribute setting, Func<string, T> getReference, Action<T, SettingAttribute> createIfNotExists, Action<T> deleteIfExists)
         {
-            Tuple<DateTime, object> tuple;
-            if (_references.TryGetValue(key, out tuple))
+            if (_references.TryGetValue(key, out var tuple))
             {
                 if (setting.Period == Period.NoPeriod || DateTime.UtcNow < tuple.Item1)
                     return (T)tuple.Item2;

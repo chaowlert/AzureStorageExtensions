@@ -82,8 +82,7 @@ namespace AzureStorageExtensions
                     if (e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.PreconditionFailed &&
                         e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.Conflict)
                         throw;
-                    TimeSpan delay;
-                    if (!policy.ShouldRetry(retry++, 0, e, out delay, null))
+                    if (!policy.ShouldRetry(retry++, 0, e, out TimeSpan delay, null))
                         throw;
                     Thread.Sleep(delay);
                 }
@@ -143,8 +142,7 @@ namespace AzureStorageExtensions
         {
             Bulk(op => item =>
             {
-                T value;
-                if (dict.TryGetValue(item.RowKey, out value))
+                if (dict.TryGetValue(item.RowKey, out T value))
                 {
                     dict.Remove(item.RowKey);
                     if (value.ApplyTo(item))
