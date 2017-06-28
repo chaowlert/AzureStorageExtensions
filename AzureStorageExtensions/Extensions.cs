@@ -2,30 +2,31 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 static class Extensions
 {
     static readonly Task ComplatedTask = Task.Delay(0);
-    public static Func<T, Task> ToTaskFunc<T>(this Action<T> action)
+    public static Func<T, CancellationToken, Task> ToTaskFunc<T>(this Action<T> action)
     {
-        return arg =>
+        return (arg, token) =>
         {
             action(arg);
             return ComplatedTask;
         };
     }
-    public static Func<T1, T2, Task> ToTaskFunc<T1, T2>(this Action<T1, T2> action)
+    public static Func<T1, T2, CancellationToken, Task> ToTaskFunc<T1, T2>(this Action<T1, T2> action)
     {
-        return (arg1, arg2) =>
+        return (arg1, arg2, token) =>
         {
             action(arg1, arg2);
             return ComplatedTask;
         };
     }
-    public static Func<T, Task<TResult>> ToTaskFunc<T, TResult>(this Func<T, TResult> func)
+    public static Func<T, CancellationToken, Task<TResult>> ToTaskFunc<T, TResult>(this Func<T, TResult> func)
     {
-        return arg =>
+        return (arg, token) =>
         {
             var result = func(arg);
             return Task.FromResult(result);

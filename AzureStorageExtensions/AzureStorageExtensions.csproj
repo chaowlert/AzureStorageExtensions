@@ -88,7 +88,6 @@
   <ItemGroup>
     <Compile Include="Applier.cs" />
     <Compile Include="BaseCloudContext.cs" />
-    <Compile Include="CloudQueueExtensions.cs" />
     <Compile Include="CloudClient.cs" />
     <Compile Include="CloudTable.cs" />
     <Compile Include="ExpandableTableEntity.cs" />
