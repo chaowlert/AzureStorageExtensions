@@ -1,21 +1,23 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Net;
+using System.Threading.Tasks;
 using AzureStorageExtensions;
 using Microsoft.WindowsAzure.Storage;
-using Microsoft.WindowsAzure.Storage.Blob;
-using Microsoft.WindowsAzure.Storage.Blob.Protocol;
 using Microsoft.WindowsAzure.Storage.Table;
+using Microsoft.WindowsAzure.Storage.Table.Queryable;
+
 //namespace AzureStorageExtensions
 //{
 public static class CloudTableExtensions
 {
-    public static void SafeDelete<T>(this CloudTable<T> table, string partitionKey, string rowKey) where T : class, ITableEntity, new()
+    static async Task deleteIfExistsAsync<T>(string partitionKey, string rowKey, Func<string, string, Task> delete) where T : class, ITableEntity, new()
     {
         try
         {
-            table.Delete(partitionKey, rowKey);
+            await delete(partitionKey, rowKey);
         }
         catch (StorageException ex)
         {
@@ -23,72 +25,129 @@ public static class CloudTableExtensions
                 throw;
         }
     }
-
-    public static void SafeDelete<T>(this CloudTable<T> table, T entity) where T : class, ITableEntity, new()
+    public static void DeleteIfExists<T>(this CloudTable<T> table, string partitionKey, string rowKey) where T : class, ITableEntity, new()
     {
-        try
-        {
-            table.Delete(entity);
-        }
-        catch (StorageException ex)
-        {
-            if (ex.RequestInformation.HttpStatusCode != 404)
-                throw;
-        }
+        Action<string, string> delete = table.Delete;
+        deleteIfExistsAsync<T>(partitionKey, rowKey, delete.ToTaskFunc()).Wait();
+    }
+    public static Task DeleteIfExistsAsync<T>(this CloudTable<T> table, string partitionKey, string rowKey) where T : class, ITableEntity, new()
+    {
+        return deleteIfExistsAsync<T>(partitionKey, rowKey, table.DeleteAsync);
     }
 
-    public static void BulkSafeDelete<T>(this CloudTable<T> table, IEnumerable<T> entities)
+    public static void DeleteIfExists<T>(this CloudTable<T> table, T entity) where T : class, ITableEntity, new()
+    {
+        table.DeleteIfExists(entity.PartitionKey, entity.RowKey);
+    }
+    public static Task DeleteIfExistsAsync<T>(this CloudTable<T> table, T entity) where T : class, ITableEntity, new()
+    {
+        return table.DeleteIfExistsAsync(entity.PartitionKey, entity.RowKey);
+    }
+
+    public static void BulkDeleteIfExists<T>(this CloudTable<T> table, IEnumerable<T> entities)
+        where T : class, ITableEntity, new()
+    {
+        Action<IEnumerable<T>> bulkDelete = table.BulkDelete;
+        Action<T> deleteIfExists = table.DeleteIfExists;
+        foreach (var chunk in entities.Chunk(100))
+        {
+            bulkDeleteIfExistsAsync(chunk, bulkDelete.ToTaskFunc(), deleteIfExists.ToTaskFunc()).Wait();
+        }
+    }
+    public static async Task BulkDeleteIfExistsAsync<T>(this CloudTable<T> table, IEnumerable<T> entities)
         where T : class, ITableEntity, new()
     {
         foreach (var chunk in entities.Chunk(100))
         {
-            table.bulkSafeDelete(chunk);
+            await bulkDeleteIfExistsAsync(chunk, table.BulkDeleteAsync, table.DeleteIfExistsAsync);
         }
     }
-
-    static void bulkSafeDelete<T>(this CloudTable<T> table, IEnumerable<T> entities) where T : class, ITableEntity, new()
+    static async Task bulkDeleteIfExistsAsync<T>(IEnumerable<T> entities, Func<IEnumerable<T>, Task> bulkDelete, Func<T, Task> deleteIfExists) 
+        where T : class, ITableEntity, new()
     {
+        var list = entities as IList<T> ?? entities.ToList();
         try
         {
-            table.BulkDelete(entities);
+            await bulkDelete(list);
         }
         catch (StorageException ex)
         {
             if (ex.RequestInformation.HttpStatusCode != 404)
                 throw;
-            foreach (var entity in entities)
+            foreach (var entity in list)
             {
-                table.SafeDelete(entity);
+                await deleteIfExists(entity);
             }
         }
     }
 
     public static U AggregateSegment<T, U>(this TableQuery<T> query, U seed, Func<IEnumerable<T>, U> selector, Func<U, U, U> aggregator)
     {
-        TableContinuationToken token = null;
-        do
+        foreach (var segment in query.IterateSegments())
         {
-            var segment = query.ExecuteSegmented(token);
             if (segment.Results.Count > 0)
             {
                 var newList = selector(segment.Results);
                 seed = aggregator(seed, newList);
             }
-            token = segment.ContinuationToken;
         }
-        while (token != null);
-
+        return seed;
+    }
+    public static async Task<U> AggregateSegmentAsync<T, U>(this TableQuery<T> query, U seed, Func<IEnumerable<T>, U> selector, Func<U, U, U> aggregator)
+    {
+        foreach (var task in query.IterateSegmentTasks())
+        {
+            var segment = await task;
+            if (segment.Results.Count > 0)
+            {
+                var newList = selector(segment.Results);
+                seed = aggregator(seed, newList);
+            }
+        }
         return seed;
     }
 
     public static void ForEachSegment<T>(this TableQuery<T> query, Action<IList<T>> action)
     {
+        foreach (var segment in query.IterateSegments())
+        {
+            if (segment.Results.Count > 0)
+            {
+                action(segment.Results);
+            }
+        }
+    }
+    public static async Task ForEachSegmentAsync<T>(this TableQuery<T> query, Action<IList<T>> action)
+    {
+        foreach (var task in query.IterateSegmentTasks())
+        {
+            var segment = await task;
+            if (segment.Results.Count > 0)
+            {
+                action(segment.Results);
+            }
+        }
+    }
+
+    public static IEnumerable<Task<TableQuerySegment<T>>> IterateSegmentTasks<T>(this TableQuery<T> query)
+    {
+        TableContinuationToken token = null;
+        do
+        {
+            var task = query.ExecuteSegmentedAsync(token);
+            yield return task;
+            var segment = task.Result;
+            token = segment.ContinuationToken;
+        }
+        while (token != null);
+    }
+    public static IEnumerable<TableQuerySegment<T>> IterateSegments<T>(this TableQuery<T> query)
+    {
         TableContinuationToken token = null;
         do
         {
             var segment = query.ExecuteSegmented(token);
-            if (segment.Results.Count > 0)
-                action(segment.Results);
+            yield return segment;
             token = segment.ContinuationToken;
         }
         while (token != null);
@@ -190,5 +249,55 @@ public static class CloudTableExtensions
         }
         return list;
     }
+
+    public static async Task<bool> AnyAsync<T>(this TableQuery<T> query)
+    {
+        foreach (var task in query.Take(1).IterateSegmentTasks())
+        {
+            var segment = await task;
+            if (segment.Results.Count > 0)
+                return true;
+        }
+        return false;
+    }
+    public static async Task<bool> AnyAsync<T>(this TableQuery<T> query, Func<T, bool> predicate)
+    {
+        foreach (var task in query.IterateSegmentTasks())
+        {
+            var segment = await task;
+            if (segment.Results.Any(predicate))
+                return true;
+        }
+        return false;
+    }
+
+    public static async Task<bool> AllAsync<T>(this TableQuery<T> query, Func<T, bool> predicate)
+    {
+        foreach (var task in query.IterateSegmentTasks())
+        {
+            var segment = await task;
+            if (!segment.Results.All(predicate))
+                return false;
+        }
+        return true;
+    }
+    //CountAsync()
+    //LongCountAsync()
+    //FirstAsync()
+    //FirstOrDefaultAsync()
+    //LastAsync()
+    //LastOrDefaultAsync()
+    //SingleAsync()
+    //SingleOrDefaultAsync()
+    //MinAsync()
+    //MaxAsync()
+    //SumAsync()
+    //AverageAsync()
+    //ContainsAsync()
+    //ToListAsync()
+    //ToArrayAsync()
+    //LoadAsync()
+    //ToDictionaryAsync()
+    //ForEachAsync()
 }
 //}

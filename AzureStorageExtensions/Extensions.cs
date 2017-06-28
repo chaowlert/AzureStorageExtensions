@@ -2,9 +2,36 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 static class Extensions
 {
+    static readonly Task ComplatedTask = Task.Delay(0);
+    public static Func<T, Task> ToTaskFunc<T>(this Action<T> action)
+    {
+        return arg =>
+        {
+            action(arg);
+            return ComplatedTask;
+        };
+    }
+    public static Func<T1, T2, Task> ToTaskFunc<T1, T2>(this Action<T1, T2> action)
+    {
+        return (arg1, arg2) =>
+        {
+            action(arg1, arg2);
+            return ComplatedTask;
+        };
+    }
+    public static Func<T, Task<TResult>> ToTaskFunc<T, TResult>(this Func<T, TResult> func)
+    {
+        return arg =>
+        {
+            var result = func(arg);
+            return Task.FromResult(result);
+        };
+    }
+
     public static IEnumerable<IEnumerable<T>> Chunk<T>(this IEnumerable<T> source, int chunksize)
     {
         var list = source as IList<T> ?? source.ToList();
