@@ -1,10 +1,8 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Configuration;
-using Microsoft.WindowsAzure.Storage;
-using Microsoft.WindowsAzure.Storage.Blob;
-using Microsoft.WindowsAzure.Storage.Queue;
-using Microsoft.WindowsAzure.Storage.Table;
+using Microsoft.Azure.Cosmos.Table;
+using Microsoft.Azure.Storage.Blob;
+using Microsoft.Azure.Storage.Queue;
 
 namespace AzureStorageExtensions
 {
@@ -13,22 +11,24 @@ namespace AzureStorageExtensions
         readonly ConcurrentDictionary<string, Tuple<DateTime, object>> _references = new ConcurrentDictionary<string, Tuple<DateTime, object>>();
 
         static readonly ConcurrentDictionary<string, CloudClient> _dict = new ConcurrentDictionary<string, CloudClient>();
-        public static CloudClient Get(string key)
+        public static CloudClient Get(string connectionString)
         {
-            var connectionString = ConfigurationManager.ConnectionStrings[key].ConnectionString;
             return _dict.GetOrAdd(connectionString, k => new CloudClient(k));
         }
 
         public CloudClient(string connectionString)
         {
             // Create clients
-            Account = CloudStorageAccount.Parse(connectionString);
-            Table = Account.CreateCloudTableClient();
-            Blob = Account.CreateCloudBlobClient();
-            Queue = Account.CreateCloudQueueClient();
+            TableAccount = CloudStorageAccount.Parse(connectionString);
+            StorageAccount = Microsoft.Azure.Storage.CloudStorageAccount.Parse(connectionString);
+            Table = TableAccount.CreateCloudTableClient();
+            Blob = StorageAccount.CreateCloudBlobClient();
+            Queue = StorageAccount.CreateCloudQueueClient();
         }
 
-        public CloudStorageAccount Account { get; }
+        public CloudStorageAccount TableAccount { get; }
+
+        public Microsoft.Azure.Storage.CloudStorageAccount StorageAccount { get; }
 
         public CloudTableClient Table { get; }
 
@@ -102,7 +102,7 @@ namespace AzureStorageExtensions
                 case Period.Day:
                     return setting.Name + date.ToString("yyyyMMdd");
                 default:
-                    throw new ArgumentOutOfRangeException();
+                    throw new ArgumentOutOfRangeException("setting.Period");
             }
         }
 
@@ -119,7 +119,7 @@ namespace AzureStorageExtensions
                 case Period.Day:
                     return date.Date.AddDays(1);
                 default:
-                    throw new ArgumentOutOfRangeException();
+                    throw new ArgumentOutOfRangeException("setting.Period");
             }
         }
 
@@ -136,7 +136,7 @@ namespace AzureStorageExtensions
                 case Period.Day:
                     return date.AddDays(-setting.RemoveAfter);
                 default:
-                    throw new ArgumentOutOfRangeException();
+                    throw new ArgumentOutOfRangeException("setting.Period");
             }
         }
     }

@@ -3,10 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using AzureStorageExtensions;
-using Microsoft.WindowsAzure.Storage;
-using Microsoft.WindowsAzure.Storage.Blob;
-using Microsoft.WindowsAzure.Storage.Blob.Protocol;
-using Microsoft.WindowsAzure.Storage.Table;
+using Microsoft.Azure.Cosmos.Table;
 //namespace AzureStorageExtensions
 //{
 public static class CloudTableExtensions

@@ -3,9 +3,9 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
-using Microsoft.WindowsAzure.Storage.Blob;
-using Microsoft.WindowsAzure.Storage.Queue;
-using Microsoft.WindowsAzure.Storage.Table;
+using Microsoft.Azure.Cosmos.Table;
+using Microsoft.Azure.Storage.Blob;
+using Microsoft.Azure.Storage.Queue;
 
 namespace AzureStorageExtensions
 {
@@ -13,11 +13,6 @@ namespace AzureStorageExtensions
     {
         public CloudClient CloudClient { get; }
 
-        protected BaseCloudContext()
-        {
-            CloudClient = CloudClient.Get(this.GetType().Name);
-            InitializeProperties();
-        }
         protected BaseCloudContext(string connectionName)
         {
             CloudClient = CloudClient.Get(connectionName);

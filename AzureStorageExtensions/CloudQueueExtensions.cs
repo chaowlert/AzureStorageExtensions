@@ -1,8 +1,8 @@
 ﻿using AzureStorageExtensions;
-using Microsoft.WindowsAzure.Storage.Queue;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using Microsoft.Azure.Storage.Queue;
 
 public static class CloudQueueExtensions
 {
