@@ -12,10 +12,11 @@ namespace AzureStorageExtensions
     public abstract class BaseCloudContext
     {
         public CloudClient CloudClient { get; }
+        protected virtual bool AutoCreate => true;
 
-        protected BaseCloudContext(string connectionName)
+        protected BaseCloudContext(string connectionString)
         {
-            CloudClient = CloudClient.Get(connectionName);
+            CloudClient = CloudClient.Get(connectionString);
             InitializeProperties();
         }
 
@@ -55,9 +56,7 @@ namespace AzureStorageExtensions
                 else if (prop.PropertyType == typeof(CloudBlobContainer))
                     method = getBlobMethod;
                 else if (prop.PropertyType.IsGenericType && prop.PropertyType.GetGenericTypeDefinition() == typeof(CloudTable<>))
-                {
                     method = getGenericTableMethod.MakeGenericMethod(prop.PropertyType.GetGenericArguments()[0]);
-                }
                 else
                     continue;
                 var setting = prop.GetCustomAttribute<SettingAttribute>() ?? SettingAttribute.Default;
@@ -66,8 +65,7 @@ namespace AzureStorageExtensions
                     setting.Name = prop.Name;
                 if (prop.PropertyType == typeof(CloudQueue) || prop.PropertyType == typeof(CloudBlobContainer))
                     setting.Name = setting.Name.ToLower();
-                var key = type.FullName + "." + prop.Name;
-                var call = Expression.Call(cloudClient, method, Expression.Constant(key), Expression.Constant(setting));
+                var call = Expression.Call(cloudClient, method, Expression.Constant(setting), Expression.Property(p, nameof(AutoCreate)));
                 var exp = Expression.Assign(Expression.Property(context, prop), call);
                 propList.Add(exp);
             }

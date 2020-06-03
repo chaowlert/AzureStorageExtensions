@@ -1,41 +1,54 @@
-﻿using AzureStorageExtensions;
-using System;
-using System.Collections.Concurrent;
+﻿using System;
 using System.Collections.Generic;
-using Microsoft.Azure.Storage.Queue;
+using System.Threading.Tasks;
 
-public static class CloudQueueExtensions
+// ReSharper disable once CheckNamespace
+namespace Microsoft.Azure.Storage.Queue
 {
-    private static readonly ConcurrentDictionary<string, bool> knownQueues = new ConcurrentDictionary<string, bool>();
-    public static CloudQueue GetQueue(this BaseCloudContext context, string name)
+    public static class CloudQueueExtensions
     {
-        var queue = context.CloudClient.Queue.GetQueueReference(name);
-        if (knownQueues.TryAdd(name, true))
-            queue.CreateIfNotExists();
-        return queue;
-    }
-
-    public static IEnumerable<CloudQueueMessage> FetchAllMessages(this CloudQueue queue)
-    {
-        var hasNext = true;
-
-        while (hasNext)
+        public static IEnumerable<CloudQueueMessage> FetchAllMessages(this CloudQueue queue, TimeSpan visibilityTimeout)
         {
-            hasNext = false;
-            var messages = queue.GetMessages(32, TimeSpan.FromMinutes(5));
-            foreach (var message in messages)
+            var hasNext = true;
+            while (hasNext)
             {
-                hasNext = true;
-                yield return message;
+                hasNext = false;
+                var messages = queue.GetMessages(32, visibilityTimeout);
+                foreach (var message in messages)
+                {
+                    hasNext = true;
+                    yield return message;
+                }
             }
         }
-    }
-
-    public static void DeleteMessages(this CloudQueue queue, IEnumerable<CloudQueueMessage> messages)
-    {
-        foreach (var message in messages)
+        public static async IAsyncEnumerable<CloudQueueMessage> FetchAllMessagesAsync(this CloudQueue queue, TimeSpan visibilityTimeout)
         {
-            queue.DeleteMessage(message);
+            var hasNext = true;
+            while (hasNext)
+            {
+                hasNext = false;
+                var messages = await queue.GetMessagesAsync(32, visibilityTimeout, null, null);
+                foreach (var message in messages)
+                {
+                    hasNext = true;
+                    yield return message;
+                }
+            }
+        }
+
+        public static void DeleteMessages(this CloudQueue queue, IEnumerable<CloudQueueMessage> messages)
+        {
+            foreach (var message in messages)
+            {
+                queue.DeleteMessage(message);
+            }
+        }
+        public static async Task DeleteMessagesAsync(this CloudQueue queue, IEnumerable<CloudQueueMessage> messages)
+        {
+            foreach (var message in messages)
+            {
+                await queue.DeleteMessageAsync(message);
+            }
         }
     }
 }

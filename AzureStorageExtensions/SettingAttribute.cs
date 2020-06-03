@@ -3,7 +3,7 @@ using Microsoft.Azure.Storage.Blob;
 
 namespace AzureStorageExtensions
 {
-    [AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
+    [AttributeUsage(AttributeTargets.Property)]
     public class SettingAttribute : Attribute, ICloneable
     {
         public static readonly SettingAttribute Default = new SettingAttribute();
@@ -15,7 +15,7 @@ namespace AzureStorageExtensions
 
         public object Clone()
         {
-            return this.MemberwiseClone();
+            return MemberwiseClone();
         }
     }
 }

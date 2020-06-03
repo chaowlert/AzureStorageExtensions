@@ -36,8 +36,17 @@ namespace AzureStorageExtensions
 
         public CloudQueueClient Queue { get; }
 
-        T GetCloudObject<T>(string key, SettingAttribute setting, Func<string, T> getReference, Action<T, SettingAttribute> createIfNotExists, Action<T> deleteIfExists)
+        T GetCloudObject<T>(SettingAttribute setting, bool autoCreate, Func<string, T> getReference, Action<T, SettingAttribute> createIfNotExists, Action<T> deleteIfExists)
         {
+            if (setting.Period == Period.NoPeriod)
+            {
+                var @ref = getReference(setting.Name);
+                if (autoCreate)
+                    createIfNotExists(@ref, setting);
+                return @ref;
+            }
+
+            var key = typeof(T).FullName + "." + setting.Name;
             if (_references.TryGetValue(key, out var tuple))
             {
                 if (setting.Period == Period.NoPeriod || DateTime.UtcNow < tuple.Item1)
@@ -52,36 +61,32 @@ namespace AzureStorageExtensions
 
             //maintain
             createIfNotExists(obj, setting);
-            if (setting.Period != Period.NoPeriod && setting.RemoveAfter > 0)
+            if (setting.RemoveAfter > 0)
             {
-                var maxDelete = setting.Period == Period.Day ? 7 : 1;
-                for (var i = 0; i < maxDelete; i++)
-                {
-                    var previous = GetPreviousDate(setting, now.AddDays(-i));
-                    var objNameToDelete = GetName(setting, previous);
-                    var objToDelete = getReference(objNameToDelete);
-                    deleteIfExists(objToDelete);
-                }
+                var previous = GetPreviousDate(setting, now);
+                var objNameToDelete = GetName(setting, previous);
+                var objToDelete = getReference(objNameToDelete);
+                deleteIfExists(objToDelete);
             }
 
             return obj;
         }
 
-        public CloudTable GetCloudTable(string key, SettingAttribute setting)
+        public CloudTable GetCloudTable(SettingAttribute setting, bool autoCreate)
         {
-            return GetCloudObject(key, setting, Table.GetTableReference, (t, s) => t.CreateIfNotExists(), t => t.DeleteIfExists());
+            return GetCloudObject(setting, autoCreate, Table.GetTableReference, (t, s) => t.CreateIfNotExists(), t => t.DeleteIfExists());
         }
-        public CloudQueue GetCloudQueue(string key, SettingAttribute setting)
+        public CloudQueue GetCloudQueue(SettingAttribute setting, bool autoCreate)
         {
-            return GetCloudObject(key, setting, Queue.GetQueueReference, (q, s) => q.CreateIfNotExists(), q => q.DeleteIfExists());
+            return GetCloudObject(setting, autoCreate, Queue.GetQueueReference, (q, s) => q.CreateIfNotExists(), q => q.DeleteIfExists());
         }
-        public CloudBlobContainer GetCloudBlobContainer(string key, SettingAttribute setting)
+        public CloudBlobContainer GetCloudBlobContainer(SettingAttribute setting, bool autoCreate)
         {
-            return GetCloudObject(key, setting, Blob.GetContainerReference, (b, s) => b.CreateIfNotExists(s.BlobAccessType), b => b.DeleteIfExists());
+            return GetCloudObject(setting, autoCreate, Blob.GetContainerReference, (b, s) => b.CreateIfNotExists(s.BlobAccessType), b => b.DeleteIfExists());
         }
-        public CloudTable<T> GetGenericCloudTable<T>(string key, SettingAttribute setting) where T : class, ITableEntity, new()
+        public CloudTable<T> GetGenericCloudTable<T>(SettingAttribute setting, bool autoCreate) where T : class, ITableEntity, new()
         {
-            return GetCloudObject(key, setting, CreateCloudTable<T>, (t, s) => t.CloudTableContext.CreateIfNotExists(), t => t.CloudTableContext.DeleteIfExists());
+            return GetCloudObject(setting, autoCreate, CreateCloudTable<T>, (t, s) => t.CloudTableContext.CreateIfNotExists(), t => t.CloudTableContext.DeleteIfExists());
         }
         CloudTable<T> CreateCloudTable<T>(string tableName) where T : class, ITableEntity, new()
         {
@@ -93,8 +98,6 @@ namespace AzureStorageExtensions
         {
             switch (setting.Period)
             {
-                case Period.NoPeriod:
-                    return setting.Name;
                 case Period.Year:
                     return setting.Name + date.ToString("yyyy");
                 case Period.Month:
@@ -102,7 +105,7 @@ namespace AzureStorageExtensions
                 case Period.Day:
                     return setting.Name + date.ToString("yyyyMMdd");
                 default:
-                    throw new ArgumentOutOfRangeException("setting.Period");
+                    return setting.Name;
             }
         }
 
@@ -110,8 +113,6 @@ namespace AzureStorageExtensions
         {
             switch (setting.Period)
             {
-                case Period.NoPeriod:
-                    return DateTime.MaxValue;
                 case Period.Year:
                     return new DateTime(date.Year + 1, 1, 1);
                 case Period.Month:
@@ -119,7 +120,7 @@ namespace AzureStorageExtensions
                 case Period.Day:
                     return date.Date.AddDays(1);
                 default:
-                    throw new ArgumentOutOfRangeException("setting.Period");
+                    return DateTime.MaxValue;
             }
         }
 
@@ -127,8 +128,6 @@ namespace AzureStorageExtensions
         {
             switch (setting.Period)
             {
-                case Period.NoPeriod:
-                    return date;
                 case Period.Year:
                     return date.AddYears(-setting.RemoveAfter);
                 case Period.Month:
@@ -136,7 +135,7 @@ namespace AzureStorageExtensions
                 case Period.Day:
                     return date.AddDays(-setting.RemoveAfter);
                 default:
-                    throw new ArgumentOutOfRangeException("setting.Period");
+                    return date;
             }
         }
     }

@@ -3,8 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Net;
-using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Azure.Cosmos.Table;
+using Microsoft.Azure.Cosmos.Table.Queryable;
 
 namespace AzureStorageExtensions
 {
@@ -17,41 +18,115 @@ namespace AzureStorageExtensions
 
         public CloudTable CloudTableContext { get; }
 
-        public T this[string partitionKey, string rowKey] => single(partitionKey, rowKey);
-
-        public void Insert(T entity, bool replaceIfExists = false)
+        public void Insert(T entity)
         {
-            var op = replaceIfExists ? TableOperation.InsertOrReplace(entity) : TableOperation.Insert(entity);
+            var op = TableOperation.Insert(entity);
             CloudTableContext.Execute(op);
         }
 
-        void innerBulk<U>(TableBatchOperation op, Action<U> action, IEnumerable<U> entities, bool checkConcurrency = false) where U : class, ITableEntity
+        public Task InsertAsync(T entity)
         {
+            var op = TableOperation.Insert(entity);
+            return CloudTableContext.ExecuteAsync(op);
+        }
+
+        public void InsertOrReplace(T entity)
+        {
+            var op = TableOperation.InsertOrReplace(entity);
+            CloudTableContext.Execute(op);
+        }
+
+        public Task InsertOrReplaceAsync(T entity)
+        {
+            var op = TableOperation.InsertOrReplace(entity);
+            return CloudTableContext.ExecuteAsync(op);
+        }
+
+        public void ExecuteBatch(TableBatchOperation op)
+        {
+            if (op.Count == 0)
+                return;
+            if (op.Count <= 100)
+            {
+                CloudTableContext.ExecuteBatch(op);
+                return;
+            }
+            foreach (var chunk in op.Chunk(100))
+            {
+                var chunkOp = new TableBatchOperation();
+                foreach (var item in chunk)
+                {
+                    chunkOp.Add(item);
+                }
+
+                CloudTableContext.ExecuteBatch(chunkOp);
+            }
+        }
+        public async Task ExecuteBatchAsync(TableBatchOperation op)
+        {
+            if (op.Count == 0)
+                return;
+            if (op.Count <= 100)
+            {
+                await CloudTableContext.ExecuteBatchAsync(op);
+                return;
+            }
+            foreach (var chunk in op.Chunk(100))
+            {
+                var chunkOp = new TableBatchOperation();
+                foreach (var item in chunk)
+                {
+                    chunkOp.Add(item);
+                }
+
+                await CloudTableContext.ExecuteBatchAsync(chunkOp);
+            }
+        }
+
+        internal void Bulk<U>(Func<TableBatchOperation, Action<ITableEntity>> func, IEnumerable<U> entities, bool checkConcurrency) where U : class, ITableEntity
+        {
+            var op = new TableBatchOperation();
+            var action = func(op);
             foreach (var item in entities)
             {
                 if (!checkConcurrency)
                     item.ETag = "*";
                 action(item);
-                if (op.Count < 100)
-                    continue;
-                CloudTableContext.ExecuteBatch(op);
-                op.Clear();
             }
+            this.ExecuteBatch(op);
         }
 
-        internal void Bulk<U>(Func<TableBatchOperation, Action<U>> func, IEnumerable<U> entities, bool checkConcurrency = false, Action<TableBatchOperation> afterBulk = null) where U : class, ITableEntity
+        internal Task BulkAsync<U>(Func<TableBatchOperation, Action<ITableEntity>> func, IEnumerable<U> entities, bool checkConcurrency) where U : class, ITableEntity
         {
             var op = new TableBatchOperation();
             var action = func(op);
-            innerBulk(op, action, entities, checkConcurrency);
-            afterBulk?.Invoke(op);
-            if (op.Count > 0)
-                CloudTableContext.ExecuteBatch(op);
+            foreach (var item in entities)
+            {
+                if (!checkConcurrency)
+                    item.ETag = "*";
+                action(item);
+            }
+            return this.ExecuteBatchAsync(op);
         }
 
-        public void BulkInsert(IEnumerable<T> entities, bool replaceIfExists = false)
+        public void BulkInsert(IEnumerable<T> entities)
         {
-            Bulk(op => replaceIfExists ? new Action<T>(op.InsertOrReplace) : op.Insert, entities);
+            Bulk(op => op.Insert, entities, true);
+        }
+
+        public Task BulkInsertAsync(IEnumerable<T> entities)
+        {
+            return BulkAsync(op => op.Insert, entities, true);
+        }
+
+        public void BulkInsertOrReplace(IEnumerable<T> entities)
+        {
+            Bulk(op => op.InsertOrReplace, entities, true);
+        }
+
+        public Task BulkInsertOrReplaceAsync(IEnumerable<T> entities)
+        {
+            return BulkAsync(op => op.InsertOrReplace, entities, true);
         }
 
         public TableQuery<T> Query()
@@ -59,185 +134,70 @@ namespace AzureStorageExtensions
             return CloudTableContext.CreateQuery<T>();
         }
 
-        T single(string partitionKey, string rowKey)
+        public TableQuery<T> Query(string partitionKey, IEnumerable<string> rowKeys)
+        {
+            var p = Expression.Parameter(typeof(T), "p");
+            var predicate = rowKeys.Select(
+                    item => Expression.Equal(Expression.Property(p, "RowKey"), Expression.Constant(item)))
+                .AggregateBalance(Expression.OrElse);
+
+            var linq = (from item in Query()
+                where item.PartitionKey == partitionKey
+                select item);
+            var lambda = Expression.Lambda<Func<T, bool>>(predicate, p);
+            return linq.Where(lambda).AsTableQuery();
+        }
+
+        public T Retrieve(string partitionKey, string rowKey)
         {
             var op = TableOperation.Retrieve<T>(partitionKey, rowKey);
             var result = CloudTableContext.Execute(op);
-            return (T)result.Result;
+            return (T) result.Result;
         }
 
-        U retry<U>(Func<U> func)
+        public async Task<T> RetrieveAsync(string partitionKey, string rowKey)
         {
-            var policy = CloudTableContext.ServiceClient.DefaultRequestOptions.RetryPolicy;
+            var op = TableOperation.Retrieve<T>(partitionKey, rowKey);
+            var result = await CloudTableContext.ExecuteAsync(op);
+            return (T) result.Result;
+        }
+
+        public async Task<U> RetryAsync<U>(Func<CloudTable<T>, Task<U>> func, IRetryPolicy policy = null)
+        {
+            policy ??= CloudTableContext.ServiceClient.DefaultRequestOptions.RetryPolicy;
             var retry = 0;
             while (true)
             {
                 try
                 {
-                    return func();
+                    return await func(this);
                 }
                 catch (StorageException e)
                 {
-                    if (e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.PreconditionFailed &&
-                        e.RequestInformation.HttpStatusCode != (int)HttpStatusCode.Conflict)
+                    if (e.RequestInformation.HttpStatusCode != (int) HttpStatusCode.PreconditionFailed &&
+                        e.RequestInformation.HttpStatusCode != (int) HttpStatusCode.Conflict)
                         throw;
                     if (!policy.ShouldRetry(retry++, 0, e, out TimeSpan delay, null))
                         throw;
-                    Thread.Sleep(delay);
+                    await Task.Delay(delay);
                 }
             }
         }
 
-        public T Update(string partitionKey, string rowKey, Action<T> action, bool createIfNotExists = false)
+        public void Delete(T entity, bool checkConcurrency = false)
         {
-            T result = null;
-            CheckUpdate(partitionKey, rowKey, obj =>
-            {
-                action(obj);
-                result = obj;
-                return true;
-            }, createIfNotExists);
-            return result;
-        }
-
-        public bool CheckUpdate(string partitionKey, string rowKey, Func<T, bool> func, bool createIfNotExists = false)
-        {
-            return retry(() =>
-            {
-                var obj = single(partitionKey, rowKey);
-                var isNew = false;
-                if (obj == null)
-                {
-                    if (createIfNotExists)
-                    {
-                        obj = new T
-                        {
-                            PartitionKey = partitionKey,
-                            RowKey = rowKey
-                        };
-                        isNew = true;
-                    }
-                    else
-                    {
-                        throw new StorageException(
-                            new RequestResult
-                            {
-                                HttpStatusCode = (int)HttpStatusCode.NotFound
-                            },
-                            $"Error update: Not Found\nPartitionKey: {partitionKey}\nRowKey: {rowKey}",
-                            null);
-                    }
-                }
-                if (!func(obj))
-                    return false;
-
-                var op = isNew ? TableOperation.Insert(obj) : TableOperation.Replace(obj);
-                CloudTableContext.Execute(op);
-                return true;
-            });
-        }
-
-        void bulkApply(Dictionary<string, T> dict, IEnumerable<T> updated)
-        {
-            Bulk(op => item =>
-            {
-                if (dict.TryGetValue(item.RowKey, out T value))
-                {
-                    dict.Remove(item.RowKey);
-                    if (value.ApplyTo(item))
-                        op.InsertOrReplace(item);
-                }
-                else
-                    op.InsertOrReplace(item);
-            }, updated, true, op => innerBulk(op, op.Delete, dict.Values));
-        }
-
-        public void BulkApply(string partitionKey, List<T> updated)
-        {
-            var dict = (from item in Query()
-                        where item.PartitionKey == partitionKey
-                        select item).ToDictionary(item => item.RowKey);
-            bulkApply(dict, updated);
-        }
-
-        public void BulkApply(string partitionKey, Func<Dictionary<string, T>, List<T>> func)
-        {
-            var dict = (from item in Query()
-                        where item.PartitionKey == partitionKey
-                        select item).ToDictionary(item => item.RowKey);
-            var updated = func(dict);
-            bulkApply(dict, updated);
-        }
-
-        public void BulkUpdate(string partitionKey, Func<string, Dictionary<string, T>, Dictionary<string, T>> func)
-        {
-            retry(() =>
-            {
-                var dict = (from item in Query()
-                            where item.PartitionKey == partitionKey
-                            select item).ToDictionary(item => item.RowKey);
-                var updated = func(partitionKey, dict);
-
-                Bulk(op => item =>
-                {
-                    if (dict.ContainsKey(item.RowKey))
-                        op.Replace(item);
-                    else
-                        op.Insert(item);
-                }, updated.Values, true);
-                return 0;
-            });
-        }
-
-        public void BulkUpdate(string partitionKey, IEnumerable<string> rowKeys, Func<string, Dictionary<string, T>, Dictionary<string, T>> func)
-        {
-            Expression<Func<T, bool>> lambda = null;
-            var rowKeyList = rowKeys as ICollection<string> ?? rowKeys.ToList();
-            if (rowKeyList.Count > 0)
-            {
-                var p = Expression.Parameter(typeof(T), "p");
-                var predicate = rowKeyList.Select(
-                    item => Expression.Equal(Expression.Property(p, "RowKey"), Expression.Constant(item)))
-                                      .AggregateBalance(Expression.OrElse);
-                lambda = Expression.Lambda<Func<T, bool>>(predicate, p);
-            }
-
-            BulkUpdate(partitionKey, lambda, func);
-        }
-
-        public void BulkUpdate(string partitionKey, Expression<Func<T, bool>> where, Func<string, Dictionary<string, T>, Dictionary<string, T>> func)
-        {
-            retry(() =>
-            {
-                Dictionary<string, T> dict;
-                if (where == null)
-                    dict = new Dictionary<string, T>();
-                else
-                {
-                    var linq = (from item in Query()
-                                where item.PartitionKey == partitionKey
-                                select item);
-                    linq = linq.Where(where);
-                    dict = linq.ToDictionary(item => item.RowKey);
-                }
-                var updated = func(partitionKey, dict);
-
-                Bulk(op => item =>
-                {
-                    if (dict.ContainsKey(item.RowKey))
-                        op.Replace(item);
-                    else
-                        op.Insert(item);
-                }, updated.Values, true);
-                return 0;
-            });
-        }
-
-        public void Delete(T entity)
-        {
-            entity.ETag = "*";
+            if (!checkConcurrency)
+                entity.ETag = "*";
             var op = TableOperation.Delete(entity);
             CloudTableContext.Execute(op);
+        }
+
+        public Task DeleteAsync(T entity, bool checkConcurrency = false)
+        {
+            if (!checkConcurrency)
+                entity.ETag = "*";
+            var op = TableOperation.Delete(entity);
+            return CloudTableContext.ExecuteAsync(op);
         }
 
         public void Delete(string partitionKey, string rowKey)
@@ -245,81 +205,241 @@ namespace AzureStorageExtensions
             var entity = new T
             {
                 PartitionKey = partitionKey,
-                RowKey = rowKey, 
+                RowKey = rowKey,
                 ETag = "*",
             };
             var op = TableOperation.Delete(entity);
             CloudTableContext.Execute(op);
         }
 
-        public void BulkDelete(IEnumerable<T> entities)
+        public Task DeleteAsync(string partitionKey, string rowKey)
         {
-            Bulk(op => op.Delete, entities);
-        }
-
-        public void BulkDelete(string partitionKey, Expression<Func<T, bool>> predicate)
-        {
-            var linq = (from item in Query()
-                        where item.PartitionKey == partitionKey
-                        select item);
-            linq = linq.Where(predicate);
-            var entities = linq.ToList();
-
-            BulkDelete(entities);
-        }
-
-        public void Replace(T entity, bool checkConcurrency = false)
-        {
-            if (!checkConcurrency)  
-                entity.ETag = "*";
-            var op = TableOperation.Replace(entity);
-            CloudTableContext.Execute(op);
-        }
-
-        public void BulkReplace(IEnumerable<T> entities, bool checkConcurrency = false)
-        {
-            Bulk(op => op.Replace, entities, checkConcurrency);
-        }
-
-        private static readonly bool _isExpandableEntity = typeof (T).IsSubclassOf(typeof (ExpandableTableEntity));
-        public void Merge(string partitionKey, string rowKey, Action<DynamicTableEntity> action, bool createIfNotExists = false)
-        {
-            var entity = new DynamicTableEntity
+            var entity = new T
             {
                 PartitionKey = partitionKey,
                 RowKey = rowKey,
                 ETag = "*",
             };
-            action(entity);
-            if (_isExpandableEntity)
-                ExpandableTableEntity.ExpandDictionary(entity.Properties, true);
-            var op = createIfNotExists ? TableOperation.InsertOrMerge(entity) : TableOperation.Merge(entity);
+            var op = TableOperation.Delete(entity);
+            return CloudTableContext.ExecuteAsync(op);
+        }
+
+        public void BulkDelete(IEnumerable<T> entities, bool checkConcurrency = false)
+        {
+            Bulk(op => op.Delete, entities, checkConcurrency);
+        }
+
+        public Task BulkDeleteAsync(IEnumerable<T> entities, bool checkConcurrency = false)
+        {
+            return BulkAsync(op => op.Delete, entities, checkConcurrency);
+        }
+
+        public void DeleteIfExists(string partitionKey, string rowKey)
+        {
+            try
+            {
+                this.Delete(partitionKey, rowKey);
+            }
+            catch (StorageException ex)
+            {
+                if (ex.RequestInformation.HttpStatusCode != 404)
+                    throw;
+            }
+        }
+
+        public async Task DeleteIfExistsAsync(string partitionKey, string rowKey)
+        {
+            try
+            {
+                await this.DeleteAsync(partitionKey, rowKey);
+            }
+            catch (StorageException ex)
+            {
+                if (ex.RequestInformation.HttpStatusCode != 404)
+                    throw;
+            }
+        }
+
+        public void DeleteIfExists(T entity, bool checkConcurrency = false)
+        {
+            try
+            {
+                this.Delete(entity, checkConcurrency);
+            }
+            catch (StorageException ex)
+            {
+                if (ex.RequestInformation.HttpStatusCode != 404)
+                    throw;
+            }
+        }
+
+        public async Task DeleteIfExistsAsync(T entity, bool checkConcurrency = false)
+        {
+            try
+            {
+                await this.DeleteAsync(entity, checkConcurrency);
+            }
+            catch (StorageException ex)
+            {
+                if (ex.RequestInformation.HttpStatusCode != 404)
+                    throw;
+            }
+        }
+
+        public void BulkDeleteIfExists(IEnumerable<T> entities, bool checkConcurrency = false)
+        {
+            foreach (var chunk in entities.Chunk(100))
+            {
+                this.bulkDeleteIfExists(chunk, checkConcurrency);
+            }
+        }
+
+        public async Task BulkDeleteIfExistsAsync(IEnumerable<T> entities, bool checkConcurrency = false)
+        {
+            foreach (var chunk in entities.Chunk(100))
+            {
+                await this.bulkDeleteIfExistsAsync(chunk, checkConcurrency);
+            }
+        }
+
+        void bulkDeleteIfExists(IEnumerable<T> entities, bool checkConcurrency = false)
+        {
+            try
+            {
+                this.BulkDelete(entities, checkConcurrency);
+            }
+            catch (StorageException ex)
+            {
+                if (ex.RequestInformation.HttpStatusCode != 404)
+                    throw;
+                var list = entities as IList<T> ?? entities.ToList();
+                var rowKeys = list.Select(it => it.RowKey);
+                var available = this.Query(list[0].PartitionKey, rowKeys).Select(it => it.RowKey).ToHashSet();
+                if (available.Count >= list.Count)
+                    throw;
+                var newList = list.Where(it => available.Contains(it.RowKey));
+                bulkDeleteIfExists(newList, checkConcurrency);
+            }
+        }
+
+        async Task bulkDeleteIfExistsAsync(IEnumerable<T> entities, bool checkConcurrency = false)
+        {
+            try
+            {
+                await this.BulkDeleteAsync(entities, checkConcurrency);
+            }
+            catch (StorageException ex)
+            {
+                if (ex.RequestInformation.HttpStatusCode != 404)
+                    throw;
+                var list = entities as IList<T> ?? entities.ToList();
+                var rowKeys = list.Select(it => it.RowKey);
+                var tmp = this.Query(list[0].PartitionKey, rowKeys).Select(it => it.RowKey).AsTableQuery().AsAsyncTableQuery();
+                var available = new HashSet<string>();
+                await foreach (var item in tmp)
+                {
+                    available.Add(item);
+                }
+                if (available.Count >= list.Count)
+                    throw;
+                var newList = list.Where(it => available.Contains(it.RowKey));
+                await bulkDeleteIfExistsAsync(newList, checkConcurrency);
+            }
+        }
+
+        public void Replace(T entity)
+        {
+            entity.ETag = "*";
+            var op = TableOperation.Replace(entity);
             CloudTableContext.Execute(op);
         }
 
-        public void BulkMerge(string partitionKey, Action<DynamicTableEntity> action, bool createIfNotExists = false)
+        public Task ReplaceAsync(T entity)
         {
-            var query = from item in Query()
-                        where item.PartitionKey == partitionKey
-                        select item.RowKey;
-            var entities = query.AsEnumerable()
-                .Select(rowKey => new DynamicTableEntity
-                {
-                    PartitionKey = partitionKey,
-                    RowKey = rowKey
-                })
-                .ToList();
-
-            Bulk(op => item =>
-            {
-                action(item);
-                if (_isExpandableEntity)
-                    ExpandableTableEntity.ExpandDictionary(item.Properties, true);
-                if (createIfNotExists)
-                    op.InsertOrMerge(item);
-                else
-                    op.Merge(item);
-            }, entities);
+            entity.ETag = "*";
+            var op = TableOperation.Replace(entity);
+            return CloudTableContext.ExecuteAsync(op);
         }
+
+        public void BulkReplace(IEnumerable<T> entities)
+        {
+            Bulk(op => op.Replace, entities, false);
+        }
+
+        public Task BulkReplaceAsync(IEnumerable<T> entities)
+        {
+            return BulkAsync(op => op.Replace, entities, false);
+        }
+
+        public void Update(T entity)
+        {
+            var op = TableOperation.Replace(entity);
+            CloudTableContext.Execute(op);
+        }
+
+        public Task UpdateAsync(T entity)
+        {
+            var op = TableOperation.Replace(entity);
+            return CloudTableContext.ExecuteAsync(op);
+        }
+
+        public void BulkUpdate(IEnumerable<T> entities)
+        {
+            Bulk(op => op.Replace, entities, true);
+        }
+
+        public Task BulkUpdateAsync(IEnumerable<T> entities)
+        {
+            return BulkAsync(op => op.Replace, entities, true);
+        }
+
+        public void Merge<U>(U entity, bool checkConcurrency = false) where U : ITableEntity
+        {
+            if (!checkConcurrency)
+                entity.ETag = "*";
+            var op = TableOperation.Merge(entity);
+            CloudTableContext.Execute(op);
+        }
+
+        public Task MergeAsync<U>(U entity, bool checkConcurrency = false) where U : class, ITableEntity
+        {
+            if (!checkConcurrency)
+                entity.ETag = "*";
+            var op = TableOperation.Merge(entity);
+            return CloudTableContext.ExecuteAsync(op);
+        }
+
+        public void BulkMerge<U>(IEnumerable<U> entities, bool checkConcurrency = false) where U : class, ITableEntity
+        {
+            Bulk(op => op.Merge, entities, checkConcurrency);
+        }
+
+        public Task BulkMergeAsync<U>(IEnumerable<U> entities, bool checkConcurrency = false) where U : class, ITableEntity
+        {
+            return BulkAsync(op => op.Merge, entities, checkConcurrency);
+        }
+        
+        public void InsertOrMerge<U>(U entity) where U : class, ITableEntity
+        {
+            var op = TableOperation.InsertOrMerge(entity);
+            CloudTableContext.Execute(op);
+        }
+
+        public Task InsertOrMergeAsync<U>(U entity) where U : class, ITableEntity
+        {
+            var op = TableOperation.InsertOrMerge(entity);
+            return CloudTableContext.ExecuteAsync(op);
+        }
+        
+        public void BulkInsertOrMerge<U>(IEnumerable<U> entities) where U : class, ITableEntity
+        {
+            Bulk(op => op.InsertOrMerge, entities, true);
+        }
+
+        public Task BulkInsertOrMergeAsync<U>(IEnumerable<U> entities) where U : class, ITableEntity
+        {
+            return BulkAsync(op => op.InsertOrMerge, entities, true);
+        }
+
     }
 }
