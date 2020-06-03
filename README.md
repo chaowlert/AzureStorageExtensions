@@ -73,3 +73,15 @@ public class Log : ExpandableTableEntity
     public string Message { get; set; } //this message can be up to 1M
 }
 ```
+
+### Migrate from 1.x
+
+`AzureStorageExtensions` is no more depending on `Web.Config`. You can add constructor and read connection string.
+
+```csharp
+public class MyContext : BaseCloudContext
+{
+    public MyContext() 
+    : base(ConfigurationManager.ConnectionStrings[nameof(MyContext)].ConnectionString) { }
+}
+```
