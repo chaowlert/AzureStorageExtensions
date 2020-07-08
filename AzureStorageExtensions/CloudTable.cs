@@ -83,7 +83,7 @@ namespace AzureStorageExtensions
             }
         }
 
-        internal void Bulk<U>(Func<TableBatchOperation, Action<ITableEntity>> func, IEnumerable<U> entities, bool checkConcurrency) where U : class, ITableEntity
+        internal void Bulk(Func<TableBatchOperation, Action<ITableEntity>> func, IEnumerable<ITableEntity> entities, bool checkConcurrency)
         {
             var op = new TableBatchOperation();
             var action = func(op);
@@ -96,7 +96,7 @@ namespace AzureStorageExtensions
             this.ExecuteBatch(op);
         }
 
-        internal Task BulkAsync<U>(Func<TableBatchOperation, Action<ITableEntity>> func, IEnumerable<U> entities, bool checkConcurrency) where U : class, ITableEntity
+        internal Task BulkAsync(Func<TableBatchOperation, Action<ITableEntity>> func, IEnumerable<ITableEntity> entities, bool checkConcurrency)
         {
             var op = new TableBatchOperation();
             var action = func(op);
@@ -393,52 +393,64 @@ namespace AzureStorageExtensions
             return BulkAsync(op => op.Replace, entities, true);
         }
 
-        public void Merge<U>(U entity, bool checkConcurrency = false) where U : ITableEntity
+        private static ITableEntity Expand(ITableEntity entity)
+        {
+            if (entity is ExpandableTableEntity)
+            {
+                var properties = entity.WriteEntity(null);
+                ExpandableTableEntity.ExpandDictionary(properties, true);
+                return new DynamicTableEntity(entity.PartitionKey, entity.RowKey, entity.ETag, properties);
+            }
+            else
+                return entity;
+        }
+
+        public void Merge(ITableEntity entity, bool checkConcurrency = false)
         {
             if (!checkConcurrency)
                 entity.ETag = "*";
-            var op = TableOperation.Merge(entity);
+            var op = TableOperation.Merge(Expand(entity));
             CloudTableContext.Execute(op);
         }
 
-        public Task MergeAsync<U>(U entity, bool checkConcurrency = false) where U : class, ITableEntity
+        public Task MergeAsync(ITableEntity entity, bool checkConcurrency = false)
         {
             if (!checkConcurrency)
                 entity.ETag = "*";
-            var op = TableOperation.Merge(entity);
+            var op = TableOperation.Merge(Expand(entity));
             return CloudTableContext.ExecuteAsync(op);
         }
 
-        public void BulkMerge<U>(IEnumerable<U> entities, bool checkConcurrency = false) where U : class, ITableEntity
+        public void BulkMerge(IEnumerable<ITableEntity> entities, bool checkConcurrency = false)
         {
-            Bulk(op => op.Merge, entities, checkConcurrency);
+            Bulk(op => op.Merge, entities.Select(Expand), checkConcurrency);
         }
 
-        public Task BulkMergeAsync<U>(IEnumerable<U> entities, bool checkConcurrency = false) where U : class, ITableEntity
+        public Task BulkMergeAsync(IEnumerable<ITableEntity> entities, bool checkConcurrency = false)
         {
-            return BulkAsync(op => op.Merge, entities, checkConcurrency);
+            return BulkAsync(op => op.Merge, entities.Select(Expand), checkConcurrency);
         }
         
-        public void InsertOrMerge<U>(U entity) where U : class, ITableEntity
+        public void InsertOrMerge(ITableEntity entity)
         {
-            var op = TableOperation.InsertOrMerge(entity);
+            var op = TableOperation.InsertOrMerge(Expand(entity));
             CloudTableContext.Execute(op);
         }
 
-        public Task InsertOrMergeAsync<U>(U entity) where U : class, ITableEntity
+        public Task InsertOrMergeAsync(ITableEntity entity)
         {
-            var op = TableOperation.InsertOrMerge(entity);
+            var op = TableOperation.InsertOrMerge(Expand(entity));
             return CloudTableContext.ExecuteAsync(op);
         }
         
-        public void BulkInsertOrMerge<U>(IEnumerable<U> entities) where U : class, ITableEntity
+        public void BulkInsertOrMerge(IEnumerable<ITableEntity> entities)
         {
-            Bulk(op => op.InsertOrMerge, entities, true);
+            Bulk(op => op.InsertOrMerge, entities.Select(Expand), true);
         }
 
-        public Task BulkInsertOrMergeAsync<U>(IEnumerable<U> entities) where U : class, ITableEntity
+        public Task BulkInsertOrMergeAsync(IEnumerable<ITableEntity> entities)
         {
-            return BulkAsync(op => op.InsertOrMerge, entities, true);
+            return BulkAsync(op => op.InsertOrMerge, entities.Select(Expand), true);
         }
 
     }
