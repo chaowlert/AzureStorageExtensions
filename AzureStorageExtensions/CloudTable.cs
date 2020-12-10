@@ -395,14 +395,16 @@ namespace AzureStorageExtensions
 
         private static ITableEntity Expand(ITableEntity entity)
         {
-            if (entity is ExpandableTableEntity)
+            switch (entity)
             {
-                var properties = entity.WriteEntity(null);
-                ExpandableTableEntity.ExpandDictionary(properties, true);
-                return new DynamicTableEntity(entity.PartitionKey, entity.RowKey, entity.ETag, properties);
+                case ExpandableTableEntity expandable:
+                {
+                    var properties = expandable.WriteEntity(null, true);
+                    return new DynamicTableEntity(entity.PartitionKey, entity.RowKey, entity.ETag, properties);
+                }
+                default:
+                    return entity;
             }
-            else
-                return entity;
         }
 
         public void Merge(ITableEntity entity, bool checkConcurrency = false)

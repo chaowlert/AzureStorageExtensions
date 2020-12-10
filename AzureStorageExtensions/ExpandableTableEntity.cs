@@ -127,5 +127,12 @@ namespace AzureStorageExtensions
             ExpandDictionary(dict);
             return dict;
         }
+
+        internal IDictionary<string, EntityProperty> WriteEntity(OperationContext operationContext, bool isMerge)
+        {
+            var dict = base.WriteEntity(operationContext);
+            ExpandDictionary(dict, isMerge);
+            return dict;
+        }
     }
 }
