@@ -5,12 +5,12 @@
     <Version>2.3.2</Version>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <Authors>chaowlert</Authors>
-    <PackageProjectUrl>https://github.com/chaowlert/AzureStorageExtension</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/chaowlert/AzureStorageExtensions</PackageProjectUrl>
     <PackageTags>scl azure storage</PackageTags>
     <Product>Azure Storage Extension</Product>
     <Description>Extensions for Azure Storage Client library</Description>
     <Copyright>Copyright (c) 2014 Chaowlert Chaisrichalermpol</Copyright>
-    <RepositoryUrl>https://github.com/chaowlert/AzureStorageExtension</RepositoryUrl>
+    <RepositoryUrl>https://github.com/chaowlert/AzureStorageExtensions</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
